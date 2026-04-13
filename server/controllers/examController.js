@@ -4,6 +4,12 @@ const Result = require('../models/Result');
 const pdfParse = require('pdf-parse');
 const { GoogleGenAI } = require('@google/genai');
 
+const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ 
+  model: "gemini-1.5-flash",
+  generationConfig: { responseMimeType: "application/json" }
+});
+
 exports.createExam = async (req, res) => {
   try {
     const { title, description, durationMinutes, availableFrom, availableUntil } = req.body;
@@ -188,79 +194,71 @@ exports.uploadPdf = async (req, res) => {
     const pdfData = await pdfParse(req.file.buffer);
     const rawText = pdfData.text;
 
-    // Custom Line-based Parser (Tailored to your specific format)
-    const parsedQuestions = [];
-    
-    // Split by question numbers like "1. ", "2. "
-    const questionBlocks = rawText.split(/(?:^|\n)\s*\d+\.\s+/g);
-    
-    for (let block of questionBlocks) {
-      block = block.trim();
-      if (!block) continue;
-      
-      // Split block into individual non-empty lines
-      const lines = block.split('\n').map(l => l.trim()).filter(l => l);
-      
-      // A valid question needs at least 1 question line + 4 option lines
-      if (lines.length >= 5) {
-        const qText = lines[0]; // Line 1 is the question
-        const options = [
-          lines[1].replace(/^[a-d][\.\)]\s*/i, ''), // Clean leading 'A)' if it exists
-          lines[2].replace(/^[a-d][\.\)]\s*/i, ''), 
-          lines[3].replace(/^[a-d][\.\)]\s*/i, ''), 
-          lines[4].replace(/^[a-d][\.\)]\s*/i, '')
-        ];
-        
-        let marks = 1;
-        let correctAnswer = options[0]; // Default to Option A if no Answer is provided
-        
-        // Scan the rest of the lines for Marks or Answer
-        for (let i = 5; i < lines.length; i++) {
-          const lLower = lines[i].toLowerCase();
-          
-          if (lLower.includes('marks')) {
-            const matchMarks = lLower.match(/(\d+)/);
-            if (matchMarks) marks = parseInt(matchMarks[1]);
-          } 
-          else if (lLower.startsWith('answer:') || lLower.startsWith('ans:')) {
-            const ansRaw = lines[i].split(':')[1].trim();
-            // Try to find matching option
-            const foundOpt = options.find(o => 
-              o.toLowerCase() === ansRaw.toLowerCase() || 
-              o.toLowerCase().startsWith(ansRaw.toLowerCase())
-            );
-            if (foundOpt) correctAnswer = foundOpt;
-          }
-        }
-
-        parsedQuestions.push({
-          text: qText,
-          options,
-          correctAnswer,
-          marks
-        });
-      }
+    if (!rawText || rawText.trim().length < 10) {
+      return res.status(400).json({ message: 'The PDF appears to be empty or contains no readable text.' });
     }
 
-    if (parsedQuestions.length === 0) {
-      return res.status(400).json({ message: 'Could not extract questions. We need 1 line for the question and the next 4 lines for options.' });
+    const prompt = `
+      Analyze the following text extracted from an MCQ exam PDF. 
+      Extract all questions and return them as a valid JSON array of objects.
+      Each object MUST have exactly these fields:
+      - "text": The question string.
+      - "options": An array of exactly 4 strings.
+      - "correctAnswer": The string representing the correct option (must be one of the strings in the "options" array).
+      - "marks": A number representing the marks/points for this question (default to 1 if not specified).
+
+      If you find questions with fewer or more than 4 options, adapt them to 4 options if possible, or ignore them if they are not multiple choice.
+      
+      Text Content:
+      ${rawText}
+
+      Return ONLY a pure JSON array. No markdown, no triple backticks.
+    `;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    let text = response.text();
+
+    // Clean up response if it contains markdown code blocks
+    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+    let parsedQuestions;
+    try {
+      parsedQuestions = JSON.parse(text);
+    } catch (e) {
+      console.error("AI Response was not valid JSON:", text);
+      return res.status(500).json({ message: 'AI failed to generate a valid question format. Please try again or check your PDF layout.' });
+    }
+
+    if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {
+      return res.status(400).json({ message: 'Could not extract any valid questions from the PDF. Please ensure it follows a standard MCQ format.' });
     }
 
     // Save to database
     const examId = req.params.id;
     const savedQuestions = [];
     for (const q of parsedQuestions) {
+      // Basic validation of AI output
+      if (!q.text || !Array.isArray(q.options) || q.options.length < 2 || !q.correctAnswer) continue;
+
       const question = new Question({
-        examId, text: q.text, options: q.options, correctAnswer: q.correctAnswer, marks: q.marks || 1
+        examId, 
+        text: q.text, 
+        options: q.options, 
+        correctAnswer: q.correctAnswer, 
+        marks: q.marks || 1
       });
       await question.save();
       savedQuestions.push(question);
     }
 
-    res.status(201).json(savedQuestions);
+    res.status(201).json({ 
+      message: `Successfully imported ${savedQuestions.length} questions via AI!`,
+      count: savedQuestions.length 
+    });
 
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: error.message || 'Error processing PDF file.' });
+    console.error("PDF AI Processing Error:", error);
+    res.status(500).json({ message: error.message || 'Error processing PDF file with AI.' });
   }
 };

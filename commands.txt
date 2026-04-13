@@ -11,3 +11,10 @@ Open a SECOND terminal and run:
 cd client
 npm install
 npm run dev
+
+cd d:\major_project\client
+npm run dev
+
+
+cd d:\major_project\server
+npm run dev

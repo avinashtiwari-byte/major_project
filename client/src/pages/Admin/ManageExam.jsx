@@ -95,10 +95,28 @@ const ManageExam = () => {
     <div className="flex-1 p-4 md:p-10 overflow-y-auto">
       <div className="max-w-4xl mx-auto">
           {/* Header */}
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
             <h2 className="text-2xl font-bold text-slate-900">Questions <span className="text-slate-400 font-medium ml-1">({questions.length})</span></h2>
-            <div className="hidden sm:block">
+            
+            <div className="flex items-center gap-2">
               <input type="file" accept=".pdf" className="hidden" ref={fileInputRef} onChange={handlePdfUpload} />
+              
+              <button 
+                onClick={() => fileInputRef.current?.click()} 
+                disabled={isUploadingPdf}
+                className="btn-secondary h-10 px-4 flex items-center gap-2 text-sm"
+              >
+                {isUploadingPdf ? <Loader2 className="animate-spin" size={16} /> : <FileUp size={16} />}
+                <span>{isUploadingPdf ? 'AI Processing...' : 'Smart PDF Import'}</span>
+              </button>
+
+              <button 
+                onClick={() => setShowAdd(true)} 
+                className="btn-primary h-10 px-4 flex items-center gap-2 text-sm"
+              >
+                <Plus size={16} />
+                <span>Add Question</span>
+              </button>
             </div>
           </div>
 
@@ -211,6 +229,18 @@ const ManageExam = () => {
             )}
           </div>
         </div>
+
+        {isUploadingPdf && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-6 text-center">
+            <div className="bg-white rounded-2xl p-10 max-w-sm w-full shadow-2xl animate-fade-in border-0">
+               <div className="h-20 w-20 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Loader2 size={40} className="animate-spin" />
+               </div>
+               <h3 className="text-xl font-bold text-slate-900 mb-2">Analyzing PDF</h3>
+               <p className="text-slate-500 mb-0">Our AI is extracting questions and structuring them for your exam. This usually takes a few seconds.</p>
+            </div>
+          </div>
+        )}
       </div>
   );
 };
