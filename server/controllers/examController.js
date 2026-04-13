@@ -2,9 +2,9 @@ const Exam = require('../models/Exam');
 const Question = require('../models/Question');
 const Result = require('../models/Result');
 const pdfParse = require('pdf-parse');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const genAI = new GoogleGenAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ 
   model: "gemini-1.5-flash",
   generationConfig: { responseMimeType: "application/json" }
@@ -151,13 +151,19 @@ exports.submitExam = async (req, res) => {
     const evaluatedAnswers = [];
 
     for (let q of questions) {
-      totalMarks += q.marks;
-      const studentAnswer = answers.find(a => a.questionId === q._id.toString());
+      totalMarks += q.marks || 0;
+      
+      // Ensure we compare strings properly
+      const studentAnswer = (answers || []).find(a => 
+        a.questionId && a.questionId.toString() === q._id.toString()
+      );
       
       let isCorrect = false;
-      if (studentAnswer && studentAnswer.selectedOption === q.correctAnswer) {
-        isCorrect = true;
-        score += q.marks;
+      if (studentAnswer && studentAnswer.selectedOption && q.correctAnswer) {
+        if (studentAnswer.selectedOption.toString().trim() === q.correctAnswer.toString().trim()) {
+          isCorrect = true;
+          score += q.marks || 0;
+        }
       }
 
       evaluatedAnswers.push({
@@ -179,10 +185,19 @@ exports.submitExam = async (req, res) => {
 
     await result.save();
 
-    res.status(201).json({ message: 'Exam submitted successfully', score, totalMarks, resultId: result._id });
+    res.status(201).json({ 
+      success: true,
+      message: 'Exam submitted successfully', 
+      score, 
+      totalMarks, 
+      resultId: result._id 
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error submitting exam' });
+    console.error('Submission Error:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error submitting exam: ' + (error.message || 'Internal server error')
+    });
   }
 };
 
@@ -224,10 +239,21 @@ exports.uploadPdf = async (req, res) => {
 
     let parsedQuestions;
     try {
+      // Find the first '[' and last ']' to extract the array, in case AI wraps it in an object
+      const startIdx = text.indexOf('[');
+      const endIdx = text.lastIndexOf(']') + 1;
+      
+      if (startIdx !== -1 && endIdx !== -1) {
+        text = text.substring(startIdx, endIdx);
+      }
+
       parsedQuestions = JSON.parse(text);
     } catch (e) {
       console.error("AI Response was not valid JSON:", text);
-      return res.status(500).json({ message: 'AI failed to generate a valid question format. Please try again or check your PDF layout.' });
+      return res.status(500).json({ 
+        message: 'AI failed to generate a valid question format. This usually happens if the PDF layout is too complex. Raw response collected.',
+        debug: text.substring(0, 100)
+      });
     }
 
     if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {

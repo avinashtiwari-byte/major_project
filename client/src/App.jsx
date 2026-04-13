@@ -40,6 +40,9 @@ const App = () => {
           <Route path="/student/results" element={<ProtectedRoute roleRequired="student"><ResultDashboard /></ProtectedRoute>} />
           <Route path="/student/results/:id" element={<ProtectedRoute roleRequired="student"><ResultDashboard /></ProtectedRoute>} />
           
+          {/* Admin viewing a specific student result */}
+          <Route path="/admin/results/:id" element={<ProtectedRoute roleRequired="admin"><ResultDashboard /></ProtectedRoute>} />
+          
           {/* Fallbacks */}
           <Route path="/student/exam/" element={<Navigate to="/student" />} />
           <Route path="*" element={<Navigate to="/" />} />

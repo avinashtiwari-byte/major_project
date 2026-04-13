@@ -27,6 +27,7 @@ const ExamRoom = () => {
   const [warningMsg, setWarningMsg] = useState("");
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
   const [faceCount, setFaceCount] = useState(1); // Assume 1 initially
+  const [showConfirm, setShowConfirm] = useState(false);
 
   useEffect(() => {
     loadModels();
@@ -79,11 +80,15 @@ const ExamRoom = () => {
     }
   }, []);
 
+  const [isSaving, setIsSaving] = useState(false);
+
   const captureSnapshot = useCallback(() => {
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot();
       if (imageSrc) {
+        setIsSaving(true);
         setSnapshots(prev => [...prev, imageSrc]);
+        setTimeout(() => setIsSaving(false), 2000);
       }
     }
   }, [webcamRef]);
@@ -152,8 +157,15 @@ const ExamRoom = () => {
     setAnswers(prev => prev.map(a => a.questionId === qId ? { ...a, selectedOption: option } : a));
   };
 
-  const submitExam = async () => {
+  const submitExam = async (confirmed = false) => {
     if (isSubmitting) return;
+
+    if (!confirmed && timeLeft > 0) {
+      setShowConfirm(true);
+      return;
+    }
+
+    setShowConfirm(false);
     setIsSubmitting(true);
     // Final snapshot before submit
     captureSnapshot();
@@ -170,10 +182,16 @@ const ExamRoom = () => {
       };
       
       const { data } = await axios.post(`/exams/${id}/submit`, payload);
-      navigate(`/student/results/${data.resultId}`);
+      
+      if (data.success) {
+        navigate(`/student/results/${data.resultId}`);
+      } else {
+        throw new Error(data.message || "Submission failed on server.");
+      }
     } catch (err) {
-      console.error(err);
-      alert('Error submitting exam!');
+      console.error('Submission error:', err);
+      const errorMsg = err.response?.data?.message || err.message || 'Error submitting exam!';
+      alert(`SUBMISSION FAILED: ${errorMsg}\n\nPlease try again. If the issue persists, contact your administrator.`);
       setIsSubmitting(false);
     }
   };
@@ -299,6 +317,12 @@ const ExamRoom = () => {
         </div>
         
         <div className="flex items-center gap-2 md:gap-5">
+          {isSaving && (
+            <div className="hidden md:flex items-center gap-2 px-4 py-2 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full animate-fade-in">
+              <span className="h-1 w-1 rounded-full bg-indigo-400 animate-ping"></span>
+              <span className="text-[10px] font-black uppercase tracking-widest">Synchronizing Logs</span>
+            </div>
+          )}
           <div className={`h-12 px-4 md:px-6 rounded-2xl flex items-center gap-2 md:gap-3 transition-colors ${timeLeft < 300 ? 'bg-red-500 text-white animate-pulse' : 'bg-white/5 text-white border border-white/10'}`}>
             <Clock size={20} className={timeLeft < 300 ? 'animate-spin-slow' : ''} />
             <span className="font-black text-lg md:text-2xl tracking-tighter tabular-nums">{formatTime(timeLeft)}</span>
@@ -379,7 +403,7 @@ const ExamRoom = () => {
                 ref={webcamRef}
                 screenshotFormat="image/jpeg"
                 className="w-full h-full object-cover grayscale opacity-80"
-                videoConstraints={{ facingMode: "user" }}
+                videoConstraints={{ width: 640, height: 480, facingMode: "user" }}
               />
               <div className="absolute inset-0 border-[20px] border-indigo-500/10 pointer-events-none"></div>
               <div className="absolute top-4 left-4 flex gap-1 items-center">
@@ -430,7 +454,38 @@ const ExamRoom = () => {
         </aside>
       </div>
 
+      {/* Custom Confirmation Modal */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-md animate-fade-in" onClick={() => setShowConfirm(false)}></div>
+          <div className="bg-white rounded-[40px] p-10 max-w-md w-full shadow-2xl relative z-10 animate-slide-in border-0">
+            <div className="h-20 w-20 bg-indigo-50 text-indigo-600 rounded-3xl flex items-center justify-center mb-6 mx-auto">
+               <ShieldAlert size={40} />
+            </div>
+            <h2 className="text-2xl font-black text-center text-slate-900 mb-4 tracking-tight uppercase">Submit Protocol?</h2>
+            <p className="text-slate-500 text-center font-medium mb-10 leading-relaxed px-4">
+              Are you sure you want to end your assessment session? You have <span className="text-indigo-600 font-bold">{formatTime(timeLeft)}</span> remaining.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={() => submitExam(true)} 
+                className="h-14 bg-indigo-600 hover:bg-slate-900 text-white font-black rounded-2xl transition-all shadow-xl shadow-indigo-600/20 uppercase tracking-widest text-sm"
+              >
+                CONFIRM SUBMISSION
+              </button>
+              <button 
+                onClick={() => setShowConfirm(false)} 
+                className="h-12 text-slate-400 hover:text-slate-600 font-black rounded-2xl transition-all uppercase tracking-widest text-[10px]"
+              >
+                Return to Assessment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Floating Proctor Indicator for Mobile */}
+
       <div className="lg:hidden fixed bottom-6 left-6 z-50">
         <div className="h-12 w-12 bg-slate-900 rounded-2xl border-2 border-indigo-500 shadow-2xl flex items-center justify-center text-white ring-4 ring-indigo-500/20">
            <Camera size={20} className="animate-pulse" />

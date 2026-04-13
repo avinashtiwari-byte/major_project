@@ -6,9 +6,16 @@ const JWT_SECRET = process.env.JWT_SECRET || 'supersecretjwtkey'; // fallback fo
 
 exports.register = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, adminCode } = req.body;
     const existingUser = await User.findOne({ email });
     if (existingUser) return res.status(400).json({ message: 'User already exists.' });
+
+    if (role === 'admin') {
+      const EXPECTED_CODE = process.env.ADMIN_ACCESS_CODE || 'PROCTOR_2026';
+      if (adminCode !== EXPECTED_CODE) {
+        return res.status(403).json({ message: 'Invalid Admin Access Code. Please contact system administrator.' });
+      }
+    }
 
     const hashedPassword = await bcrypt.hash(password, 12);
     const userRole = role === 'admin' ? 'admin' : 'student';
