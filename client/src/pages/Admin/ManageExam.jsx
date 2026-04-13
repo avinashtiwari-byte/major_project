@@ -212,7 +212,6 @@ const ManageExam = () => {
           </div>
         </div>
       </div>
-    </div>
   );
 };
 

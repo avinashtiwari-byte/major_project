@@ -112,8 +112,7 @@ const StudentDashboard = () => {
             )}
           </div>
         </div>
-      </main>
-    </div>
+      </div>
   );
 };
 
