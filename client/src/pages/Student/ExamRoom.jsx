@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { AuthContext } from '../../context/AuthContext';
 import Webcam from 'react-webcam';
+import * as faceapi from '@vladmandic/face-api';
 import { AlertCircle, Clock, Maximize, ShieldAlert, CheckCircle, ChevronRight, Monitor, Camera, Lock, CameraOff, AlertTriangle, Loader2, Save } from 'lucide-react';
 
 const ExamRoom = () => {
@@ -22,16 +23,34 @@ const ExamRoom = () => {
   const [snapshots, setSnapshots] = useState([]);
   const webcamRef = useRef(null);
   const snapshotInterval = useRef(null);
+  const detectionInterval = useRef(null);
   const [warningMsg, setWarningMsg] = useState("");
+  const [isModelsLoaded, setIsModelsLoaded] = useState(false);
+  const [faceCount, setFaceCount] = useState(1); // Assume 1 initially
 
   useEffect(() => {
+    loadModels();
     fetchExamData();
     // Cleanup intervals/listeners on unmount
     return () => {
       clearInterval(snapshotInterval.current);
+      clearInterval(detectionInterval.current);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [id]);
+
+  const loadModels = async () => {
+    try {
+      // Using CDN for models to avoid local asset management issues
+      const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      ]);
+      setIsModelsLoaded(true);
+    } catch (err) {
+      console.error("Error loading face detection models:", err);
+    }
+  };
 
   const fetchExamData = async () => {
     try {
@@ -83,8 +102,32 @@ const ExamRoom = () => {
     
     // Capture snapshot every 30 seconds
     snapshotInterval.current = setInterval(captureSnapshot, 30000);
+    // Start face detection every 2 seconds
+    detectionInterval.current = setInterval(runFaceDetection, 2000);
+
     // Take initial snapshot
     setTimeout(captureSnapshot, 2000); 
+  };
+
+  const runFaceDetection = async () => {
+    if (webcamRef.current && webcamRef.current.video && webcamRef.current.video.readyState === 4) {
+      const video = webcamRef.current.video;
+      const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
+      
+      const count = detections.length;
+      setFaceCount(count);
+
+      if (count > 1) {
+        setWarningMsg("SECURITY ALERT: Multiple persons detected! You must be alone.");
+        captureSnapshot(); // Auto-snapshot as proof
+      } else if (count === 0) {
+        setWarningMsg("SECURITY WARNING: No face detected! Please stay in view of the camera.");
+      } else {
+        // If it was showing a face warning before, clear it. 
+        // But don't clear tab switch warnings (they have their own timeout)
+        setWarningMsg(prev => (prev.includes("detected") ? "" : prev));
+      }
+    }
   };
 
   // Timer Countdown
@@ -354,20 +397,26 @@ const ExamRoom = () => {
                  <div className="h-full bg-indigo-600 transition-all duration-1000" style={{ width: `${Math.max(0, 100 - (tabSwitches * 10))}%` }}></div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                 <div className="bg-white p-4 rounded-2xl shadow-sm boer border-slate-100 flex flex-col items-center">
+                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center">
                    <Clock size={16} className="text-slate-300 mb-2" />
                    <span className="text-xs font-black text-slate-900">{timeLeft < 0 ? 'Exp' : formatTime(timeLeft)}</span>
                    <span className="text-[8px] font-bold text-slate-400 uppercase mt-1">Remaining</span>
                  </div>
-                 <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col items-center">
-                   <Monitor size={16} className="text-slate-300 mb-2" />
-                   <span className="text-xs font-black text-slate-900">{tabSwitches}</span>
-                   <span className="text-[8px] font-bold text-slate-400 uppercase mt-1">Violations</span>
+                 <div className={`p-4 rounded-2xl shadow-sm border flex flex-col items-center transition-colors ${faceCount !== 1 ? 'bg-red-50 border-red-100' : 'bg-white border-slate-100'}`}>
+                   <Camera size={16} className={faceCount !== 1 ? 'text-red-500 mb-2' : 'text-slate-300 mb-2'} />
+                   <span className={`text-xs font-black ${faceCount !== 1 ? 'text-red-700' : 'text-slate-900'}`}>{faceCount}</span>
+                   <span className="text-[8px] font-bold text-slate-400 uppercase mt-1">Person(s)</span>
                  </div>
               </div>
            </div>
 
            <div className="mt-auto space-y-4">
+              {!isModelsLoaded && (
+                <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100 flex items-center gap-3">
+                  <Loader2 size={16} className="animate-spin text-amber-600" />
+                  <span className="text-[10px] font-bold text-amber-700 uppercase italic">Initializing AI Guard...</span>
+                </div>
+              )}
               <div className="p-4 bg-indigo-50 rounded-2xl flex items-center gap-4">
                  <div className="h-10 w-10 bg-white rounded-xl shadow-sm flex items-center justify-center font-black text-indigo-600 uppercase">
                     {user?.name?.charAt(0)}

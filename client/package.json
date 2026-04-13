@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.2.2",
+    "@vladmandic/face-api": "^1.7.15",
     "axios": "^1.15.0",
     "jwt-decode": "^4.0.0",
     "lucide-react": "^1.8.0",
