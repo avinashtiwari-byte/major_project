@@ -239,7 +239,7 @@ const ExamRoom = () => {
             </div>
             
             <h1 className="text-3xl md:text-5xl font-black mb-4 tracking-tight leading-tight uppercase italic text-indigo-100">
-              SECURE <span className="text-white">INITIATION</span>
+              EXAM <span className="text-white">INITIATION</span>
             </h1>
             <p className="text-slate-400 text-base md:text-xl mb-10 font-medium max-w-xl mx-auto">
               You are entering an encrypted examination protocol. Strict proctoring rules are in active effect.

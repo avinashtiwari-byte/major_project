@@ -2,13 +2,187 @@ const Exam = require('../models/Exam');
 const Question = require('../models/Question');
 const Result = require('../models/Result');
 const pdfParse = require('pdf-parse');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ 
-  model: "gemini-1.5-flash",
-  generationConfig: { responseMimeType: "application/json" }
-});
+// ─── Robust local PDF question parser (no API needed) ───
+
+/**
+ * Parses MCQ questions from raw PDF text using multiple regex strategies.
+ * Handles many common PDF question formats including:
+ *   - Numbered questions: "1.", "1)", "Q1.", "Q1)", "Q.1", "Question 1"
+ *   - Options: "A)", "A.", "(A)", "a)", "a.", "(a)", "A-", "A:"
+ *   - Inline options on one line or each on separate lines
+ *   - Answer lines: "Answer: C", "Ans: C", "Correct Answer: C", "Answer: Paris" (full text)
+ *   - Answer key section at the end of the PDF
+ */
+function parseQuestionsFromText(rawText) {
+  // Normalize text
+  let text = rawText
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\t/g, '  ');
+
+  // Log the entire raw text for debugging
+  console.log(`[PDF Parser] ===== RAW PDF TEXT START =====`);
+  console.log(text);
+  console.log(`[PDF Parser] ===== RAW PDF TEXT END =====`);
+
+  // ── Step 1: Extract answer key if present ──
+  const answerKey = {};
+  const answerKeyMatch = text.match(/answer\s*key[:\s]*\n?([\s\S]*?)$/i);
+  if (answerKeyMatch) {
+    const keyText = answerKeyMatch[1];
+    const keyEntries = keyText.matchAll(/(\d+)\s*[.):\-–]\s*\(?([A-Da-d])\)?/g);
+    for (const m of keyEntries) {
+      answerKey[parseInt(m[1])] = m[2].toUpperCase();
+    }
+    // Remove answer key section from the main text to avoid confusion
+    text = text.substring(0, text.indexOf(answerKeyMatch[0]));
+    console.log(`[PDF Parser] Found answer key with ${Object.keys(answerKey).length} entries`);
+  }
+
+  // ── Step 2: Split text into question blocks ──
+  // A question block starts with a number at the beginning of a line
+  // We use a split regex that captures the question number
+  // This splits on: newline + number + . or ) 
+  // OR: start of text + number + . or )
+  
+  const questions = [];
+  
+  // Find all question start positions using global regex
+  // Match: start-of-line, optional whitespace, digits, then . or ) or :
+  const questionStartRegex = /(?:^|\n)\s*(\d+)\s*[.):](?:\s)/g;
+  const matches = [];
+  let match;
+  
+  while ((match = questionStartRegex.exec(text)) !== null) {
+    matches.push({
+      index: match.index,
+      num: parseInt(match[1]),
+      fullMatch: match[0]
+    });
+  }
+  
+  // Also try Q1. or Question 1 format
+  const qPrefixRegex = /(?:^|\n)\s*(?:Q\.?\s*(\d+)|Question\s+(\d+))\s*[.):]?\s/gi;
+  while ((match = qPrefixRegex.exec(text)) !== null) {
+    const num = parseInt(match[1] || match[2]);
+    // Only add if not already found at this position
+    if (!matches.some(m => Math.abs(m.index - match.index) < 5)) {
+      matches.push({
+        index: match.index,
+        num: num,
+        fullMatch: match[0]
+      });
+    }
+  }
+  
+  // Sort by position in text
+  matches.sort((a, b) => a.index - b.index);
+  
+  console.log(`[PDF Parser] Found ${matches.length} potential question starts`);
+  
+  if (matches.length === 0) {
+    console.log(`[PDF Parser] No questions found in PDF text.`);
+    return [];
+  }
+  
+  // Extract each question block (text between two consecutive question starts)
+  for (let i = 0; i < matches.length; i++) {
+    const blockStart = matches[i].index;
+    const blockEnd = (i + 1 < matches.length) ? matches[i + 1].index : text.length;
+    let block = text.substring(blockStart, blockEnd).trim();
+    const qNum = matches[i].num;
+    
+    console.log(`[PDF Parser] Processing block for Q${qNum}: "${block.substring(0, 60).replace(/\n/g, '\\n')}..."`);
+    
+    // Remove the question number prefix from the block to get the question text + options
+    // e.g., "1. What is the capital?" -> "What is the capital?"
+    block = block.replace(/^\s*\d+\s*[.):]?\s*/, '');
+    block = block.replace(/^\s*(?:Q\.?\s*\d+|Question\s+\d+)\s*[.):]?\s*/i, '');
+    
+    // ── Find options within this block ──
+    // Strategy: look for A/B/C/D option markers
+    const optionData = {};
+    let questionText = '';
+    let inlineAnswer = null;
+    
+    // Try multi-line options first: each option on its own line
+    // Pattern: line starting with A) or A. or (A) etc.
+    const optLineRegex = /(?:^|\n)\s*\(?([A-Da-d])\)?\s*[.):\-–]\s*(.+)/g;
+    const optMatches = [...block.matchAll(optLineRegex)];
+    
+    if (optMatches.length >= 2) {
+      // Question text = everything before the first option
+      const firstOptIdx = block.indexOf(optMatches[0][0]);
+      questionText = block.substring(0, firstOptIdx).trim();
+      
+      for (const om of optMatches) {
+        optionData[om[1].toUpperCase()] = om[2].trim()
+          // clean trailing options or answer text from the value
+          .replace(/\s*\(?[A-Da-d]\)?\s*[.):\-–].*$/, '')
+          .trim();
+      }
+      
+      // Look for inline answer after options
+      const afterOptions = block.substring(block.lastIndexOf(optMatches[optMatches.length - 1][0]) + optMatches[optMatches.length - 1][0].length);
+      const ansMatch = afterOptions.match(/(?:answer|ans|correct\s*answer?)\s*[.:)\-–]\s*\(?([A-Da-d])\)?/i);
+      if (ansMatch) {
+        inlineAnswer = ansMatch[1].toUpperCase();
+      }
+    }
+    
+    // If no multi-line options found, try inline options on a single line
+    if (Object.keys(optionData).length < 2) {
+      // Try to find a line with multiple options inline
+      const lines = block.split('\n');
+      for (const line of lines) {
+        const inlineOpts = [...line.matchAll(/\(?([A-Da-d])\)?\s*[.):\-–]\s*([^A-Da-d\n(]+?)(?=\s*\(?[A-Da-d]\)?\s*[.):\-–]|$)/g)];
+        if (inlineOpts.length >= 2) {
+          // Everything before this line in the block is the question text
+          const lineIdx = block.indexOf(line);
+          questionText = block.substring(0, lineIdx).trim();
+          
+          for (const om of inlineOpts) {
+            optionData[om[1].toUpperCase()] = om[2].trim();
+          }
+          break;
+        }
+      }
+    }
+    
+    // Clean up question text (remove trailing newlines, extra spaces)
+    questionText = questionText.replace(/\n/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    
+    if (!questionText || Object.keys(optionData).length < 2) {
+      console.log(`[PDF Parser] Skipping Q${qNum}: questionText="${questionText}", options=${Object.keys(optionData).length}`);
+      continue;
+    }
+    
+    // Build the question object
+    const optKeys = Object.keys(optionData).sort();
+    const optionsArray = optKeys.map(k => optionData[k]);
+    
+    // Determine correct answer
+    let correctAnswer = null;
+    const ansLetter = inlineAnswer || answerKey[qNum];
+    if (ansLetter && optionData[ansLetter]) {
+      correctAnswer = optionData[ansLetter];
+    }
+    
+    questions.push({
+      text: questionText,
+      options: optionsArray,
+      correctAnswer: correctAnswer || optionsArray[0],
+      marks: 1
+    });
+    
+    console.log(`[PDF Parser] ✅ Saved Q${qNum}: "${questionText.substring(0, 50)}..." with ${optionsArray.length} options`);
+  }
+  
+  console.log(`[PDF Parser] Total extracted: ${questions.length} questions`);
+  return questions;
+}
+
 
 exports.createExam = async (req, res) => {
   try {
@@ -213,59 +387,24 @@ exports.uploadPdf = async (req, res) => {
       return res.status(400).json({ message: 'The PDF appears to be empty or contains no readable text.' });
     }
 
-    const prompt = `
-      Analyze the following text extracted from an MCQ exam PDF. 
-      Extract all questions and return them as a valid JSON array of objects.
-      Each object MUST have exactly these fields:
-      - "text": The question string.
-      - "options": An array of exactly 4 strings.
-      - "correctAnswer": The string representing the correct option (must be one of the strings in the "options" array).
-      - "marks": A number representing the marks/points for this question (default to 1 if not specified).
-
-      If you find questions with fewer or more than 4 options, adapt them to 4 options if possible, or ignore them if they are not multiple choice.
-      
-      Text Content:
-      ${rawText}
-
-      Return ONLY a pure JSON array. No markdown, no triple backticks.
-    `;
-
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    let text = response.text();
-
-    // Clean up response if it contains markdown code blocks
-    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
-    let parsedQuestions;
-    try {
-      // Find the first '[' and last ']' to extract the array, in case AI wraps it in an object
-      const startIdx = text.indexOf('[');
-      const endIdx = text.lastIndexOf(']') + 1;
-      
-      if (startIdx !== -1 && endIdx !== -1) {
-        text = text.substring(startIdx, endIdx);
-      }
-
-      parsedQuestions = JSON.parse(text);
-    } catch (e) {
-      console.error("AI Response was not valid JSON:", text);
-      return res.status(500).json({ 
-        message: 'AI failed to generate a valid question format. This usually happens if the PDF layout is too complex. Raw response collected.',
-        debug: text.substring(0, 100)
-      });
-    }
+    // Parse questions using simple text pattern matching (no API needed)
+    const parsedQuestions = parseQuestionsFromText(rawText);
 
     if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {
-      return res.status(400).json({ message: 'Could not extract any valid questions from the PDF. Please ensure it follows a standard MCQ format.' });
+      return res.status(400).json({ 
+        message: 'Could not extract any questions from the PDF. Please ensure it follows a standard MCQ format:\n\n' +
+                 '1. Question text?\n' +
+                 'A) Option 1  B) Option 2  C) Option 3  D) Option 4\n' +
+                 'Answer: A\n\n' +
+                 'Or include an Answer Key section at the end.'
+      });
     }
 
     // Save to database
     const examId = req.params.id;
     const savedQuestions = [];
     for (const q of parsedQuestions) {
-      // Basic validation of AI output
-      if (!q.text || !Array.isArray(q.options) || q.options.length < 2 || !q.correctAnswer) continue;
+      if (!q.text || !Array.isArray(q.options) || q.options.length < 2) continue;
 
       const question = new Question({
         examId, 
@@ -279,12 +418,12 @@ exports.uploadPdf = async (req, res) => {
     }
 
     res.status(201).json({ 
-      message: `Successfully imported ${savedQuestions.length} questions via AI!`,
+      message: `Successfully imported ${savedQuestions.length} questions from PDF!`,
       count: savedQuestions.length 
     });
 
   } catch (error) {
-    console.error("PDF AI Processing Error:", error);
-    res.status(500).json({ message: error.message || 'Error processing PDF file with AI.' });
+    console.error("PDF Processing Error:", error);
+    res.status(500).json({ message: error.message || 'Error processing PDF file.' });
   }
 };

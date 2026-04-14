@@ -25,9 +25,10 @@ const Navbar = () => {
              <div className="h-10 w-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-600/20">
                <ShieldCheck size={24} />
              </div>
-             <span className="text-xl font-black text-slate-900 tracking-tighter uppercase italic">
-               SECURE<span className="text-indigo-600">DRIVE</span>
-             </span>
+             <div className="flex flex-col leading-tight">
+               <span className="text-base font-semibold text-slate-900 tracking-tight">Online Examination</span>
+               <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">MGMT SYS — Master</span>
+             </div>
           </div>
 
           {/* Desktop Links */}

@@ -31,8 +31,8 @@ const Login = () => {
           <div className="inline-flex items-center justify-center h-20 w-20 rounded-3xl bg-indigo-600 mb-6 shadow-2xl shadow-indigo-600/20 transform rotate-6">
              <ShieldCheck className="text-white" size={40} />
           </div>
-          <h1 className="text-4xl font-black text-white tracking-tighter mb-2 italic uppercase">Secure <span className="text-indigo-500">Access</span></h1>
-          <p className="text-slate-500 font-bold text-[10px] uppercase tracking-[0.3em]">Re-authenticating Identity Terminal</p>
+          <h1 className="text-4xl font-black text-white tracking-tighter mb-2 uppercase">Online <span className="text-indigo-500">Examination</span></h1>
+          <p className="text-slate-500 font-bold text-[10px] uppercase tracking-[0.3em]">MGMT SYS — Master</p>
         </div>
         
         <div className="bg-[#151921] border border-white/5 rounded-[40px] p-10 shadow-3xl backdrop-blur-3xl relative overflow-hidden">
